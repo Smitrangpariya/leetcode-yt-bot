@@ -6,7 +6,6 @@ import time
 import requests
 import config
 
-# Ordered by daily quota (500 RPD first, then 20 RPD fallbacks)
 MODEL_CANDIDATES = [
     "gemini-3.1-flash-lite",
     "gemini-3.5-flash-lite",
@@ -38,7 +37,9 @@ def ask_json(system: str, user_prompt: str) -> dict:
     models = [preferred] + [m for m in MODEL_CANDIDATES if m != preferred]
 
     for model in models:
+        # CLEAN URL WITHOUT ANY MARKDOWN BRACKETS
         url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent?key={api_key}"
+        
         payload = {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [{"parts": [{"text": user_prompt}]}],
