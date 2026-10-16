@@ -1,0 +1,14 @@
+requests
+python-dotenv
+Pillow
+pygments
+numpy
+soundfile
+kokoro-onnx          # free local voice (runs inside the GitHub job)
+edge-tts>=6.1.19     # fallback voice with retry logic
+gradio_client        # cloud GPU voice cloning (optional)
+google-genai         # Gemini SDK (used for future enhancements)
+google-api-python-client
+google-auth-oauthlib
+google-auth-httplib2
+# anthropic          # only if you set LLM_PROVIDER=anthropic (paid)
