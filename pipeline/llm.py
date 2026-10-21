@@ -38,7 +38,7 @@ def ask_json(system: str, user_prompt: str) -> dict:
 
     for model in models:
         # CLEAN URL WITHOUT ANY MARKDOWN BRACKETS
-        url = f"[https://generativelanguage.googleapis.com/v1beta/models/](https://generativelanguage.googleapis.com/v1beta/models/){model}:generateContent?key={api_key}"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
         
         payload = {
             "systemInstruction": {"parts": [{"text": system}]},
