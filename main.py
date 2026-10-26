@@ -6,58 +6,65 @@ import config
 from pipeline import leetcode, solver, scenes, render, thumbnail, metadata, youtube, notify
 
 
-def run(dry_run: bool = False, force: bool = False, problem_id: int | None = None, advance: bool = False, lang: str | None = None):
-    # Set runtime language if flag is passed
+def run(
+    dry_run: bool = False,
+    force: bool = False,
+    problem_id: int | None = None,
+    advance: bool = False,
+    lang: str | None = None,
+    no_advance: bool = False,
+):
+    # Set runtime language if flag is passed.
     if lang:
         config.LANGUAGE = lang
 
-    # 1. Resolve problem ID
+    # Resolve problem ID.
     target_id = problem_id if problem_id is not None else leetcode.get_current_sequence_id()
-    print(f"\n==========================================")
+    print("\n==========================================")
     print(f"  LeetCode Sequential Run: Problem #{target_id}")
     print(f"  Channel: {config.CHANNEL_NAME} | Lang: {config.LANGUAGE.upper()}")
-    print(f"==========================================\n")
+    print("==========================================\n")
 
-    # 2. Fetch problem details
+    # Fetch problem details.
     problem = leetcode.fetch_daily(target_id)
     print(f"Problem: #{problem['id']} {problem['title']} ({problem['difficulty']})")
     print(f"Topics: {', '.join(problem['topics'])}\n")
 
-    # 3. Create target directory
+    # Keep English and Hindi/Hinglish assets in separate directories.
     suffix = f"_{config.LANGUAGE}" if config.LANGUAGE != "en" else ""
     work = config.DATA / f"{problem['id']}-{problem['slug']}{suffix}"
     work.mkdir(parents=True, exist_ok=True)
 
     done_flag = work / "done.txt"
     if done_flag.exists() and not force:
-        print(f"Problem #{problem['id']} was already processed. Use --force to regenerate.")
+        print(f"Problem #{problem['id']} ({config.LANGUAGE.upper()}) was already processed. Use --force to regenerate.")
         return
 
-    # 4. Solve & Verify (uses cached solution.json if present)
+    # Solve and verify; solution.json is cached per language directory.
     print(f"Loading/Generating Java solutions and {config.LANGUAGE.upper()} narration...")
     sol, results = solver.generate_verified(problem, work_dir=work)
 
-    # 5. Compile timeline & render video
+    # Compile timeline and render video.
     print("\nCompiling 1080p slide timeline...")
     beats = scenes.build_beats(problem, sol, results)
     video_path, chapters = render.build_video(beats, problem, work, seed=int(problem["id"]))
 
-    # 6. Metadata & Thumbnail (uses cached metadata.json if present)
+    # Metadata and thumbnail are cached per language directory.
     print("\nGenerating metadata and thumbnail...")
     meta = metadata.build(problem, sol, work_dir=work)
     thumb_code = sol["approaches"][-1].get("java_code", sol["approaches"][-1]["code"])
     thumb_path = thumbnail.make(problem, meta, thumb_code, work / "thumb.jpg")
 
     meta["description"] = metadata.build_description(problem, sol, meta, chapters)
-    (work / "metadata.json").write_text(json.dumps(meta, indent=2), encoding="utf-8")
+    (work / "metadata.json").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"\n✓ Video Generated: {video_path}")
     print(f"✓ Thumbnail Generated: {thumb_path}")
 
-    # 7. Dry-Run or Upload
+    # Dry-run or upload.
     if dry_run:
         print("\n[DRY RUN] Completed locally. Skipped YouTube upload.")
-        if advance:
+        if advance and not no_advance:
             leetcode.advance_sequence(int(problem["id"]))
         return
 
@@ -68,7 +75,10 @@ def run(dry_run: bool = False, force: bool = False, problem_id: int | None = Non
         done_flag.write_text(f"uploaded: {vid_id}\n", encoding="utf-8")
         notify.success(problem, vid_id)
 
-        leetcode.advance_sequence(int(problem["id"]))
+        # Manual language runs pass --no-advance. The bilingual workflow advances
+        # the sequence once, after both uploads succeed.
+        if not no_advance:
+            leetcode.advance_sequence(int(problem["id"]))
     except Exception as e:
         print(f"Upload failed: {e}")
         notify.failure(problem, e)
@@ -78,14 +88,22 @@ def run(dry_run: bool = False, force: bool = False, problem_id: int | None = Non
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Sequential LeetCode YouTube Automation")
     parser.add_argument("--dry-run", action="store_true", help="Generate video locally without uploading")
-    parser.add_argument("--force", action="store_true", help="Force regenerate even if problem was completed")
-    parser.add_argument("--id", type=int, default=None, help="Specific problem ID to run (e.g. --id 1)")
+    parser.add_argument("--force", action="store_true", help="Force regenerate even if the problem/language was completed")
+    parser.add_argument("--id", type=int, default=None, help="Specific problem ID (e.g. --id 1)")
     parser.add_argument("--advance", action="store_true", help="Advance sequence pointer during dry-run")
-    parser.add_argument("--lang", type=str, default=None, choices=["en", "hi"], help="Language: 'en' for English, 'hi' for Hindi/Hinglish")
+    parser.add_argument("--no-advance", action="store_true", help="Do not advance sequence after this run")
+    parser.add_argument("--lang", type=str, default=None, choices=["en", "hi"], help="Language: en (English) or hi (Hindi/Hinglish)")
 
     args = parser.parse_args()
     try:
-        run(dry_run=args.dry_run, force=args.force, problem_id=args.id, advance=args.advance, lang=args.lang)
+        run(
+            dry_run=args.dry_run,
+            force=args.force,
+            problem_id=args.id,
+            advance=args.advance,
+            lang=args.lang,
+            no_advance=args.no_advance,
+        )
     except Exception as e:
         print(f"\n[ERROR] Pipeline failed: {e}", file=sys.stderr)
         sys.exit(1)
