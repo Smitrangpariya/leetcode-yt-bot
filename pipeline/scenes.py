@@ -1,7 +1,8 @@
 """Turns the verified solution into a timeline of 'beats'.
 A beat = one frame spec + (optional) narration line. Silent beats have a fixed duration.
 Code walkthroughs: displays Java code, lines reveal one by one, then a highlight moves through the code in sync
-with the narration while a side panel shows REAL variable values from an execution trace."""
+with the narration while a side panel shows REAL variable values from an execution trace.
+"""
 import ast
 import json
 import re
@@ -16,6 +17,30 @@ def _fmt_args(code: str, args: list) -> str:
         names = [f"arg{i + 1}" for i in range(len(args))]
     s = ", ".join(f"{n} = {json.dumps(v)}" for n, v in zip(names, args))
     return s if len(s) <= 78 else s[:75] + "..."
+
+
+def _array_visual(problem: dict, args: list, output) -> dict | None:
+    """Build an array diagram from a simple list input and verified output."""
+    if not args or not isinstance(args[0], list):
+        return None
+
+    values = args[0]
+    if not values or len(values) > 14:
+        return None
+    if any(isinstance(value, (list, dict)) for value in values):
+        return None
+
+    highlights = []
+    is_two_sum = "two sum" in str(problem.get("title", "")).lower()
+    if (
+        is_two_sum
+        and isinstance(output, (list, tuple))
+        and len(output) == 2
+        and all(type(index) is int and 0 <= index < len(values) for index in output)
+    ):
+        highlights = list(output)
+
+    return {"values": values, "highlight_indices": highlights}
 
 
 def _get_line_bounds(step: dict) -> tuple[int, int]:
@@ -74,53 +99,150 @@ def _watch_for_steps(events: list, steps: list) -> list[dict]:
 def build_beats(problem: dict, sol: dict, results: dict) -> list[dict]:
     beats: list[dict] = []
     first = sol["approaches"][0]
+    last = sol["approaches"][-1]
     demo_args = sol["tests"][0]
-    demo_out = json.dumps(results[first["name"]][0])
+    demo_output = results[first["name"]][0]
+    demo_out = json.dumps(demo_output)
+    array_demo = _array_visual(problem, demo_args, demo_output)
     topics = ", ".join(problem["topics"][:3])
 
-    beats.append({"spec": {"layout": "title", "title": problem["title"], "topics": topics},
-                  "say": sol["hook"], "chapter": "Intro"})
-    beats.append({"spec": {"layout": "text", "heading": "The Problem", "paras": [sol["summary"]],
-                           "example": [("Input", _fmt_args(first["code"], demo_args)),
-                                       ("Output", demo_out if len(demo_out) < 70 else demo_out[:67] + "...")]},
-                  "say": sol["problem_say"], "chapter": "The problem"})
-    beats.append({"spec": {"layout": "text", "heading": "The Key Idea", "paras": [sol["intuition"]]},
-                  "say": sol["intuition_say"], "chapter": "Intuition"})
+    beats.append({
+        "spec": {"layout": "title", "title": problem["title"], "topics": topics},
+        "say": sol["hook"],
+        "chapter": "Intro",
+    })
+
+    problem_spec = {
+        "layout": "text",
+        "heading": "The Problem",
+        "paras": [sol["summary"]],
+        "example": [
+            ("Input", _fmt_args(first["code"], demo_args)),
+            ("Output", demo_out if len(demo_out) < 70 else demo_out[:67] + "..."),
+        ],
+    }
+    if array_demo:
+        problem_spec["array_visual"] = array_demo
+    beats.append({
+        "spec": problem_spec,
+        "say": sol["problem_say"],
+        "chapter": "The problem",
+    })
+
+    beats.append({
+        "spec": {
+            "layout": "text",
+            "heading": "The Key Idea",
+            "paras": [sol["intuition"]],
+            "cards": [
+                {
+                    "label": first["name"],
+                    "value": first.get("time", "—"),
+                    "detail": first.get("idea", ""),
+                },
+                {
+                    "label": last["name"],
+                    "value": last.get("time", "—"),
+                    "detail": last.get("idea", ""),
+                },
+            ],
+        },
+        "say": sol["intuition_say"],
+        "chapter": "Intuition",
+    })
 
     total = len(sol["approaches"])
-    for ai, a in enumerate(sol["approaches"], 1):
-        head = f"Approach {ai}/{total}: {a['name']}"
-        beats.append({"spec": {"layout": "text", "heading": head, "paras": [a["idea"]]},
-                      "say": a["idea_say"], "chapter": f"Approach {ai}: {a['name']}"})
+    for ai, approach in enumerate(sol["approaches"], 1):
+        head = f"Approach {ai}/{total}: {approach['name']}"
+        beats.append({
+            "spec": {
+                "layout": "text",
+                "heading": head,
+                "paras": [approach["idea"]],
+                "cards": [
+                    {
+                        "label": "TIME COMPLEXITY",
+                        "value": approach.get("time", "—"),
+                        "detail": "How runtime grows as the input gets larger.",
+                    },
+                    {
+                        "label": "SPACE COMPLEXITY",
+                        "value": approach.get("space", "—"),
+                        "detail": "Additional memory used by this approach.",
+                    },
+                    {
+                        "label": "CORE STRATEGY",
+                        "value": approach["name"],
+                        "detail": approach.get("idea", ""),
+                    },
+                ],
+            },
+            "say": approach["idea_say"],
+            "chapter": f"Approach {ai}: {approach['name']}",
+        })
 
-        # Use Java code for the video display slides
-        display_code = a.get("java_code") or a["code"]
+        # Use Java code for the video display slides.
+        display_code = approach.get("java_code") or approach["code"]
         n = len(display_code.splitlines())
         per = max(0.05, min(0.14, 2.2 / n))
 
-        # Code reveals line by line
+        # Code reveals line by line.
         for k in range(1, n + 1):
-            beats.append({"spec": {"layout": "code", "heading": head, "code": display_code, "visible": k,
-                                   "mode": "writing"}, "dur": per})
+            beats.append({
+                "spec": {
+                    "layout": "code",
+                    "heading": head,
+                    "code": display_code,
+                    "visible": k,
+                    "mode": "writing",
+                },
+                "dur": per,
+            })
 
-        # Trace live variables using python execution harness
-        events = verifier.trace(a["code"], demo_args)
-        watches = _watch_for_steps(events, a["steps"])
+        # Trace live variables using the Python execution harness.
+        events = verifier.trace(approach["code"], demo_args)
+        watches = _watch_for_steps(events, approach["steps"])
 
-        # Step walkthrough with highlighted lines
-        for si, (s, w) in enumerate(zip(a["steps"], watches), 1):
-            lo, hi = _get_line_bounds(s)
-            beats.append({"spec": {"layout": "code", "heading": head, "code": display_code,
-                                   "active": (lo, hi), "mode": "step",
-                                   "step": (si, len(a["steps"])), "watch": w},
-                          "say": s["say"]})
+        # Step walkthrough with highlighted lines.
+        for si, (step, watch) in enumerate(zip(approach["steps"], watches), 1):
+            lo, hi = _get_line_bounds(step)
+            beats.append({
+                "spec": {
+                    "layout": "code",
+                    "heading": head,
+                    "code": display_code,
+                    "active": (lo, hi),
+                    "mode": "step",
+                    "step": (si, len(approach["steps"])),
+                    "watch": watch,
+                },
+                "say": step["say"],
+            })
 
-        beats.append({"spec": {"layout": "code", "heading": head, "code": display_code, "mode": "done",
-                               "time": a["time"], "space": a["space"]},
-                      "say": a["complexity_say"]})
+        beats.append({
+            "spec": {
+                "layout": "code",
+                "heading": head,
+                "code": display_code,
+                "mode": "done",
+                "time": approach["time"],
+                "space": approach["space"],
+            },
+            "say": approach["complexity_say"],
+        })
 
-    beats.append({"spec": {"layout": "table", "heading": "Side by Side",
-                           "rows": [(a["name"], a["time"], a["space"]) for a in sol["approaches"]]},
-                  "say": sol["comparison_say"], "chapter": "Comparison"})
-    beats.append({"spec": {"layout": "outro"}, "say": sol["outro_say"], "chapter": "Wrap-up"})
+    beats.append({
+        "spec": {
+            "layout": "table",
+            "heading": "Side by Side",
+            "rows": [(a["name"], a["time"], a["space"]) for a in sol["approaches"]],
+        },
+        "say": sol["comparison_say"],
+        "chapter": "Comparison",
+    })
+    beats.append({
+        "spec": {"layout": "outro"},
+        "say": sol["outro_say"],
+        "chapter": "Wrap-up",
+    })
     return beats
