@@ -45,6 +45,112 @@ def _draw_bottom_subtitle(img: Image.Image, text: str):
         y += 36
 
 
+
+def _draw_info_cards(img: Image.Image, cards: list[dict], top: int):
+    """Draw strategy/complexity cards on explanatory text slides."""
+    if not cards:
+        return
+
+    d = ImageDraw.Draw(img)
+    gap = 22
+    count = len(cards)
+    card_w = (W - 2 * PAD - gap * (count - 1)) // count
+    card_h = 330
+
+    for i, card in enumerate(cards):
+        x = PAD + i * (card_w + gap)
+        d.rounded_rectangle(
+            (x, top, x + card_w, top + card_h),
+            radius=22,
+            fill=D.PANEL,
+            outline=D.PANEL_HI,
+            width=2,
+        )
+
+        label = str(card.get("label", "")).upper()
+        label_font = D.font(22, bold=True)
+        for line_no, line in enumerate(D.wrap(d, label, label_font, card_w - 48)[:2]):
+            d.text((x + 24, top + 24 + line_no * 28), line, font=label_font, fill=D.ACCENT)
+
+        value = str(card.get("value", ""))
+        value_font = D.font(34, bold=True)
+        value_lines = D.wrap(d, value, value_font, card_w - 48)[:2]
+        value_y = top + 94
+        for line in value_lines:
+            d.text((x + 24, value_y), line, font=value_font, fill=D.GREEN)
+            value_y += 42
+
+        detail = str(card.get("detail", ""))
+        detail_font = D.font(25)
+        detail_lines = D.wrap(d, detail, detail_font, card_w - 48)[:4]
+        detail_y = max(top + 166, value_y + 8)
+        for line in detail_lines:
+            if detail_y > top + card_h - 32:
+                break
+            d.text((x + 24, detail_y), line, font=detail_font, fill=D.TEXT)
+            detail_y += 33
+
+
+def _draw_array_visual(img: Image.Image, visual: dict, top: int):
+    """Draw input array values and zero-based indices as a compact diagram."""
+    values = visual.get("values", [])
+    if not values:
+        return
+
+    d = ImageDraw.Draw(img)
+    d.rounded_rectangle(
+        (PAD, top, W - PAD, top + 220),
+        radius=22,
+        fill=D.PANEL,
+        outline=D.PANEL_HI,
+        width=2,
+    )
+    d.text(
+        (PAD + 28, top + 18),
+        "SAMPLE ARRAY  •  ZERO-BASED INDEX",
+        font=D.font(23, bold=True),
+        fill=D.ACCENT,
+    )
+
+    gap = 10
+    inner_w = W - 2 * PAD - 56
+    cell_w = min(150, (inner_w - gap * (len(values) - 1)) // len(values))
+    total_w = len(values) * cell_w + (len(values) - 1) * gap
+    start_x = (W - total_w) // 2
+    highlights = set(visual.get("highlight_indices", []))
+
+    for index, value in enumerate(values):
+        x = start_x + index * (cell_w + gap)
+        highlighted = index in highlights
+        d.rounded_rectangle(
+            (x, top + 64, x + cell_w, top + 132),
+            radius=12,
+            fill=D.PANEL_HI if highlighted else D.BG,
+            outline=D.ACCENT if highlighted else D.PANEL_HI,
+            width=2,
+        )
+
+        text = str(value)
+        value_font = D.font(27, bold=highlighted, mono=True)
+        while len(text) > 1 and d.textlength(text, font=value_font) > cell_w - 14:
+            text = text[:-1]
+
+        d.text(
+            (x + cell_w / 2, top + 98),
+            text,
+            font=value_font,
+            fill=D.TEXT,
+            anchor="mm",
+        )
+        d.text(
+            (x + cell_w / 2, top + 163),
+            f"index {index}",
+            font=D.font(19),
+            fill=D.ACCENT if highlighted else D.MUTED,
+            anchor="mm",
+        )
+
+
 def render_frame(beat: dict, problem: dict) -> Image.Image:
     spec = beat.get("spec", {})
     layout = spec.get("layout", "text")
@@ -92,6 +198,15 @@ def render_frame(beat: dict, problem: dict) -> Image.Image:
                 D.pill(d, (PAD + 30, ey), k, D.font(24, True), D.ACCENT)
                 d.text((PAD + 170, ey + 4), str(v), font=D.font(28, mono=True), fill=D.TEXT)
                 ey += 56
+
+        cards = spec.get("cards", [])
+        if cards:
+            _draw_info_cards(img, cards, top=max(y + 28, 350))
+
+        array_visual = spec.get("array_visual")
+        if array_visual:
+            visual_top = max(y + (190 if example else 30), 390)
+            _draw_array_visual(img, array_visual, top=visual_top)
 
     elif layout == "code":
         _draw_header(img, problem)
