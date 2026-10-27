@@ -1,4 +1,5 @@
 """Differential testing + an execution tracer with robust schema normalization."""
+import ast
 import json
 import subprocess
 import sys
@@ -6,6 +7,85 @@ import sys
 
 class VerifyError(Exception):
     pass
+
+
+def _ensure_solution_entrypoint(code: str) -> str:
+    """Adapt common LeetCode Python signatures to the verifier's solution() API."""
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        # Leave invalid code untouched so the normal verifier reports its syntax error.
+        return code
+
+    if any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == "solution"
+        for node in tree.body
+    ):
+        return code
+
+    # Prefer a LeetCode-style `class Solution` and its main public method.
+    solution_class = next(
+        (node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "Solution"),
+        None,
+    )
+    if solution_class is not None:
+        methods = [
+            node for node in solution_class.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and not node.name.startswith("_")
+        ]
+        if methods:
+            called_by_other_method = set()
+            for method in methods:
+                for node in ast.walk(method):
+                    if (
+                        isinstance(node, ast.Call)
+                        and isinstance(node.func, ast.Attribute)
+                        and node.func.attr != method.name
+                    ):
+                        called_by_other_method.add(node.func.attr)
+
+            candidates = [m for m in methods if m.name not in called_by_other_method]
+            target = (candidates or methods)[-1]
+            return (
+                code.rstrip()
+                + "\n\n# Adapter for the pipeline verifier\n"
+                + "def solution(*args, **kwargs):\n"
+                + f"    return Solution().{target.name}(*args, **kwargs)\n"
+            )
+
+    # Otherwise, adapt a top-level function whose name is not solution().
+    functions = [
+        node for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and not node.name.startswith("_")
+    ]
+    if functions:
+        called_by_other_function = set()
+        for function in functions:
+            for node in ast.walk(function):
+                if (
+                    isinstance(node, ast.Call)
+                    and isinstance(node.func, ast.Name)
+                    and node.func.id != function.name
+                ):
+                    called_by_other_function.add(node.func.id)
+
+        candidates = [f for f in functions if f.name not in called_by_other_function]
+        target = (candidates or functions)[-1]
+        return (
+            code.rstrip()
+            + "\n\n# Adapter for the pipeline verifier\n"
+            + "def solution(*args, **kwargs):\n"
+            + f"    return {target.name}(*args, **kwargs)\n"
+        )
+
+    # Do not silently invent an implementation if the model returned an unsupported shape.
+    raise VerifyError(
+        "Python code must define solution(), a top-level function, "
+        "or a public method inside class Solution."
+    )
 
 
 HARNESS = """
@@ -124,8 +204,10 @@ print(json.dumps(events))
 
 def _run(harness: str, payload, timeout: int = 20):
     try:
-        p = subprocess.run([sys.executable, "-c", harness], input=json.dumps(payload),
-                           capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(
+            [sys.executable, "-c", harness],
+            input=json.dumps(payload), capture_output=True, text=True, timeout=timeout,
+        )
     except subprocess.TimeoutExpired:
         raise VerifyError("code execution timed out")
     if p.returncode != 0:
@@ -135,17 +217,17 @@ def _run(harness: str, payload, timeout: int = 20):
 
 def trace(code: str, args: list) -> list:
     try:
-        return _run(TRACE_HARNESS, [code, args])
+        adapted_code = _ensure_solution_entrypoint(code)
+        return _run(TRACE_HARNESS, [adapted_code, args])
     except Exception:
         return []
 
 
 def normalize_sol(sol: dict) -> dict:
-    """Unwraps nested dictionary containers if LLM wrapped the JSON."""
+    """Unwrap nested dictionary containers if LLM wrapped the JSON."""
     if not isinstance(sol, dict):
         raise VerifyError("Response is not a valid JSON object")
 
-    # If approaches is nested inside a root key (e.g. {"solution": {...}})
     if "approaches" not in sol:
         for val in sol.values():
             if isinstance(val, dict) and "approaches" in val:
@@ -163,7 +245,6 @@ def _check_shape(sol: dict) -> None:
     if not approaches or not tests:
         raise VerifyError("missing approaches or tests")
 
-    # Ensure tests is a list of argument lists
     if isinstance(tests, list) and len(tests) > 0:
         if not isinstance(tests[0], (list, tuple)):
             sol["tests"] = [tests]
@@ -182,7 +263,6 @@ def _check_shape(sol: dict) -> None:
         if jn > 24:
             raise VerifyError(f"{a['name']}: java_code has {jn} lines, max is 24")
 
-        # Normalize line ranges for each step
         for s in a["steps"]:
             raw_lines = s.get("lines", [1, 1])
             if isinstance(raw_lines, (int, float)):
@@ -202,7 +282,6 @@ def _check_shape(sol: dict) -> None:
                 lo, hi = hi, lo
 
             s["lines"] = [lo, hi]
-
             if not (1 <= lo <= max(n, jn) + 2) or not str(s.get("say", "")).strip():
                 raise VerifyError(f"{a['name']}: bad step {s}")
 
@@ -213,7 +292,8 @@ def verify(sol: dict) -> dict:
     results = {}
     for a in sol["approaches"]:
         try:
-            results[a["name"]] = _run(HARNESS, [a["code"], sol["tests"]])
+            adapted_code = _ensure_solution_entrypoint(a["code"])
+            results[a["name"]] = _run(HARNESS, [adapted_code, sol["tests"]])
         except VerifyError as e:
             raise VerifyError(f"{a['name']}: {e}")
     names = list(results)
