@@ -113,16 +113,24 @@ Return JSON with exactly this shape:
   ],
   "comparison_say": "deep side-by-side comparison advising interview strategy, 80-100 words",
   "outro_say": "charismatic sign-off proposing an edge case for viewers in comments and teasing tomorrow's problem, 50-70 words",
-  "tests": [
-    [[2, 7, 11, 15], 9],
-    [[3, 2, 4], 6],
-    [[3, 3], 6]
-  ]
+  "tests": []
 }}
+
 
 CRITICAL RULES:
 1. Every step must have 'lines': [start, end] as a 2-element integer list.
 2. In Hinglish spoken fields, write 'hee' instead of 'hi', 'toh' instead of 'to', 'doh' instead of 'do', and 'istemaal' instead of 'use'.
+3. The 'tests' field MUST contain 3-5 valid test cases. Never return an empty list.
+4. Each test case must be a list of positional arguments for ONE call to the Python solution.
+5. Inspect the CURRENT LeetCode problem and the generated Python function signature. Every test must match the correct number and types of arguments.
+6. NEVER copy Two Sum test cases into another problem unless the current problem is Two Sum.
+7. For a one-argument string problem such as longest substring, use this format:
+   "tests": [["abcabcbb"], ["bbbbb"], ["pwwkew"]]
+8. For a one-argument array problem, wrap the complete array as the single argument:
+   "tests": [[[1, 2, 3]], [[4, 5, 6]]]
+9. For a two-argument problem such as Two Sum, each test case must contain both arguments:
+   "tests": [[[2, 7, 11, 15], 9], [[3, 2, 4], 6]]
+10. Return only valid JSON. Replace all examples with appropriate test cases for the CURRENT problem.
 """
 
 
